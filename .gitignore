@@ -1,0 +1,22 @@
+# Environment & API Key Files
+.env
+.env.local
+.env.*.local
+
+# Byte-compiled / Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# System / Virtual Environment files
+.venv/
+env/
+venv/
+ENV/
+
+# System logs & metadata
+*.log
+.system_generated/
+.DS_Store
+Thumbs.db
