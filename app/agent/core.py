@@ -459,8 +459,7 @@ class ConversationalAgent:
             )
             response_paragraphs.append(f"### 🔍 Search & Knowledge Results\n{search_output}")
 
-        header_intro = f"Here is the detailed response and tool execution summary{prev_context_hint}:\n\n"
-        final_text = header_intro + "\n\n".join(response_paragraphs)
+        final_text = "\n\n".join(response_paragraphs)
 
         thought_process.append("Completed turn processing. Packaging response with structured metadata.")
         structured_data = self._extract_structured_data(message, final_text, tool_traces)
