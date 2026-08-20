@@ -91,7 +91,7 @@ st.sidebar.markdown("### 🎛️ Session & Context Controls")
 
 active_session_id = st.sidebar.text_input(
     "Active Session ID",
-    value=st.session_id,
+    value=st.session_state.session_id,
     help="Change Session ID to test multi-turn conversation memory isolation."
 )
 if active_session_id != st.session_state.session_id:
