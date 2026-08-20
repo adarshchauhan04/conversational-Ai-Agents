@@ -131,8 +131,8 @@ class ConversationalAgent:
         model_repo: str
     ) -> StructuredResponse:
         """Executes query using Hugging Face Model Inference API with LangChain integration."""
-        from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-        from langchain_core.messages import HumanMessage, AIMessage
+        from langchain_core.messages import HumanMessage
+        from huggingface_hub import InferenceClient
 
         thought_process = [
             f"Received query: '{message}'",
@@ -146,7 +146,10 @@ class ConversationalAgent:
         tool_outputs = []
 
         if any(k in msg_lower for k in ['calculate', 'math', '+', '*', '/', 'percent', 'tip', 'tax', 'sqrt', 'sin']):
-            cleaned_expr = re.sub(r'^(what is|calculate|solve|how much is|compute)\s+', '', message, flags=re.IGNORECASE)
+            pct_match = re.search(r'([\d\.]+\%\s+of\s+\$?[\d\.,]+)', message, re.IGNORECASE)
+            math_expr_match = re.search(r'([\d\.\$\,]+\s*[\+\-\*\/\^]\s*[\d\.\$\,]+)', message)
+            cleaned_expr = pct_match.group(1) if pct_match else (math_expr_match.group(1) if math_expr_match else re.sub(r'^(what is|calculate|solve|how much is|compute)\s+', '', message, flags=re.IGNORECASE))
+            
             thought_process.append(f"Math intent detected. Executing tool 'calculate' on '{cleaned_expr}'")
             t_start = time.time()
             calc_out = calculate.invoke(cleaned_expr)
@@ -162,7 +165,7 @@ class ConversationalAgent:
             )
             tool_outputs.append(f"[Tool output from 'calculate']: {calc_out}")
 
-        if any(k in msg_lower for k in ['search', 'latest', 'news', 'who is', 'what is', 'find', 'weather', 'python']):
+        if any(k in msg_lower for k in ['search', 'latest', 'news', 'who is', 'find', 'weather', 'stock']):
             thought_process.append(f"Web search intent detected. Executing tool 'web_search' for '{message}'")
             t_start = time.time()
             search_out = web_search.invoke(message)
@@ -199,11 +202,26 @@ class ConversationalAgent:
         if tool_outputs:
             augmented_prompt += "\n\nContext & Tool Results:\n" + "\n".join(tool_outputs)
 
-        current_messages = list(history_msgs) + [HumanMessage(content=augmented_prompt)]
+        # Execute via HuggingFace Hub InferenceClient
+        client = InferenceClient(token=settings.effective_hf_token)
+        messages_payload = [{"role": "system", "content": system_prompt}]
+        
+        for msg in history_msgs:
+            role = "user" if msg.type == "human" else "assistant"
+            messages_payload.append({"role": role, "content": str(msg.content)})
 
-        # Initialize Hugging Face model
+        messages_payload.append({"role": "user", "content": augmented_prompt})
+
         try:
-            # Try OpenAI-compatible Hugging Face v1 endpoint first for fast streaming
+            hf_res = client.chat_completion(
+                messages=messages_payload,
+                model=model_repo,
+                max_tokens=512,
+                temperature=max(0.1, temperature)
+            )
+            final_text = str(hf_res.choices[0].message.content)
+        except Exception as client_err:
+            thought_process.append(f"InferenceClient fallback to Router API: {client_err}")
             from langchain_openai import ChatOpenAI
             hf_llm = ChatOpenAI(
                 model=model_repo,
@@ -211,18 +229,8 @@ class ConversationalAgent:
                 base_url="https://api-inference.huggingface.co/v1",
                 temperature=temperature
             )
+            current_messages = list(history_msgs) + [HumanMessage(content=augmented_prompt)]
             ai_resp = hf_llm.invoke(current_messages)
-            final_text = str(ai_resp.content)
-        except Exception as api_err:
-            thought_process.append(f"Serverless router fallback: trying ChatHuggingFace endpoint ({api_err})")
-            endpoint = HuggingFaceEndpoint(
-                repo_id=model_repo,
-                huggingfacehub_api_token=settings.effective_hf_token,
-                temperature=temperature,
-                max_new_tokens=512
-            )
-            chat_model = ChatHuggingFace(llm=endpoint)
-            ai_resp = chat_model.invoke(current_messages)
             final_text = str(ai_resp.content)
 
         thought_process.append(f"Successfully generated response via Hugging Face model '{model_repo}'.")
@@ -246,7 +254,7 @@ class ConversationalAgent:
     ) -> StructuredResponse:
         """Executes query using LangChain ChatOpenAI tool-calling agent."""
         from langchain_openai import ChatOpenAI
-        from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+        from langchain_core.messages import HumanMessage, ToolMessage
 
         llm = ChatOpenAI(
             model=settings.openai_model,
@@ -347,7 +355,7 @@ class ConversationalAgent:
             "Routing intent to agent tools (Web Search / Calculator / Datetime)..."
         ]
         tool_traces: List[ToolExecutionTrace] = []
-        msg_lower = message.lower()
+        msg_lower = message.lower().strip()
 
         history_msgs = memory_manager.get_history_schemas(session_id)
         prev_context_hint = ""
@@ -358,11 +366,34 @@ class ConversationalAgent:
 
         response_paragraphs: List[str] = []
 
-        # 1. Math calculation tool check
+        # 1. Check for Greeting / Conversational intent
+        greetings = ['hi', 'hello', 'hey', 'greetings', 'who are you', 'what are you', 'how are you', 'help', 'what can you do']
+        is_greeting = any(re.search(r'\b' + g + r'\b', msg_lower) for g in greetings)
+
+        if is_greeting and not any(k in msg_lower for k in ['search', 'calculate', 'date', 'time', 'news', 'weather', 'plus', 'tax']):
+            thought_process.append("Greeting intent recognized. Formulating conversational response.")
+            final_text = (
+                f"Hello! I am your **Conversational AI Agent**{prev_context_hint}.\n\n"
+                "I am equipped with real-time tools to help you:\n"
+                "- 🧮 **Calculator**: Solve mathematical calculations, tip/tax percentages, trigonometry, and roots.\n"
+                "- 🔍 **Web Search**: Fetch live information, news, current facts, and technical documentation.\n"
+                "- 📅 **Datetime Engine**: Compute current time, dates, and offsets (*e.g., '45 days from today'*).\n"
+                "- 💬 **Multi-Turn Memory**: Remember context across our conversation.\n\n"
+                "How can I assist you today?"
+            )
+            structured_data = self._extract_structured_data(message, final_text, tool_traces)
+            return StructuredResponse(
+                session_id=session_id,
+                response=final_text,
+                structured_data=structured_data,
+                tool_calls=tool_traces,
+                thought_process=thought_process
+            )
+
+        # 2. Math calculation tool check
         is_math_query = any(re.search(r'\b' + p + r'\b', msg_lower) for p in ['calculate', 'math', 'sum', 'percent', 'tip', 'tax', 'sqrt', 'sin']) or ('+' in msg_lower or '*' in msg_lower or '/' in msg_lower or '%' in msg_lower)
 
         if is_math_query:
-            # Extract specific math substring if present
             pct_match = re.search(r'([\d\.]+\%\s+of\s+\$?[\d\.,]+)', message, re.IGNORECASE)
             math_expr_match = re.search(r'([\d\.\$\,]+\s*[\+\-\*\/\^]\s*[\d\.\$\,]+)', message)
             
@@ -389,7 +420,7 @@ class ConversationalAgent:
             )
             response_paragraphs.append(f"### 🧮 Calculation Result\n- **Expression:** `{cleaned_expr}`\n- **Output:** {calc_output}")
 
-        # 2. Datetime tool check
+        # 3. Datetime tool check
         datetime_keywords = ['date', 'time', 'day', 'today', 'tomorrow', 'days from', 'weeks ago', 'clock', 'timezone']
         is_datetime_query = any(k in msg_lower for k in datetime_keywords)
 
@@ -410,11 +441,11 @@ class ConversationalAgent:
             )
             response_paragraphs.append(f"### 📅 Datetime Information\n```\n{dt_output}\n```")
 
-        # 3. Web Search tool check
+        # 4. Web Search tool check
         search_keywords = ['search', 'latest', 'news', 'who is', 'what is', 'find', 'stock', 'weather', 'python', 'fastapi', 'streamlit', 'ai', 'langchain', 'huggingface', 'hugging face']
-        is_search_query = any(k in msg_lower for k in search_keywords) or (not is_math_query and not is_datetime_query)
+        is_search_query = any(k in msg_lower for k in search_keywords)
 
-        if is_search_query and not (is_math_query and not any(k in msg_lower for k in ['search', 'news', 'latest'])):
+        if is_search_query:
             thought_process.append(f"Information query detected. Executing 'web_search' tool for: '{message}'")
             t_start = time.time()
             search_output = web_search.invoke(message)
@@ -432,9 +463,15 @@ class ConversationalAgent:
             response_paragraphs.append(f"### 🔍 Search Results & Information\n{search_output}")
 
         if not response_paragraphs:
-            final_text = f"I am your Conversational AI Agent{prev_context_hint}. I received your query: '{message}'. How can I assist you further with search, Hugging Face models, or math calculations?"
+            final_text = (
+                f"I received your query: '{message}'{prev_context_hint}.\n\n"
+                "I am ready to assist you! Try asking me:\n"
+                "- *'What is a 18% tip on $125.00 plus tax?'*\n"
+                "- *'Search for the latest news in AI'* \n"
+                "- *'What date will it be 45 days from today?'*"
+            )
         else:
-            header_intro = f"Here is the detailed response and tool execution summary{prev_context_hint}:\n\n"
+            header_intro = f"Here is the response and tool execution summary{prev_context_hint}:\n\n"
             final_text = header_intro + "\n\n".join(response_paragraphs)
 
         thought_process.append("Completed turn processing. Packaging response with structured metadata.")
