@@ -2,6 +2,7 @@ import argparse
 import os
 import subprocess
 import sys
+import time
 import uvicorn
 from app.config import settings
 
@@ -29,6 +30,34 @@ def run_ui():
     subprocess.run(cmd)
 
 
+def run_dev():
+    """Launch both FastAPI server and Streamlit UI concurrently."""
+    print(f"⚡ Starting FastAPI Server (port {settings.fastapi_port}) AND Streamlit UI (port {settings.streamlit_port})...")
+    
+    # 1. Start FastAPI server as a subprocess
+    api_cmd = [
+        sys.executable, "-m", "uvicorn", "app.api.main:app",
+        "--host", settings.fastapi_host,
+        "--port", str(settings.fastapi_port)
+    ]
+    api_process = subprocess.Popen(api_cmd)
+    
+    time.sleep(2)  # Give API 2 seconds to initialize
+
+    # 2. Start Streamlit UI
+    ui_path = os.path.join(os.path.dirname(__file__), "ui", "app.py")
+    ui_cmd = [
+        sys.executable, "-m", "streamlit", "run", ui_path,
+        "--server.port", str(settings.streamlit_port),
+        "--server.headless", "true"
+    ]
+    
+    try:
+        subprocess.run(ui_cmd)
+    finally:
+        api_process.terminate()
+
+
 def run_tests():
     """Run pytest suite."""
     print("🧪 Running Pytest Test Suite...")
@@ -41,14 +70,16 @@ def main():
     parser = argparse.ArgumentParser(description="Conversational AI Agent CLI Runner")
     parser.add_argument(
         "--mode",
-        choices=["api", "ui", "test"],
-        default="api",
-        help="Mode to execute: 'api' (FastAPI Backend), 'ui' (Streamlit Interface), or 'test' (Pytest suite)"
+        choices=["api", "ui", "dev", "test"],
+        default="dev",
+        help="Mode to execute: 'dev' (FastAPI + Streamlit together), 'api' (FastAPI Backend), 'ui' (Streamlit Interface), or 'test' (Pytest suite)"
     )
 
     args = parser.parse_args()
 
-    if args.mode == "api":
+    if args.mode == "dev":
+        run_dev()
+    elif args.mode == "api":
         run_api()
     elif args.mode == "ui":
         run_ui()

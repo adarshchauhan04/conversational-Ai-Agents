@@ -70,14 +70,20 @@ if "Hugging Face" in selected_provider:
     if hf_model_input:
         settings.hf_model = hf_model_input
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### 🔌 API Connection Mode")
+def is_fastapi_online(url: str) -> bool:
+    try:
+        r = requests.get(f"{url.rstrip('/')}/health", timeout=1)
+        return r.status_code == 200
+    except Exception:
+        return False
+
+api_online = is_fastapi_online(settings.fastapi_url)
 
 execution_mode = st.sidebar.radio(
     "Connection Mode",
-    options=["FastAPI Backend API", "Direct Agent Module"],
-    index=0 if settings.fastapi_url else 1,
-    help="FastAPI Backend Mode sends HTTP requests to FastAPI server. Direct Mode executes inside Streamlit."
+    options=["Direct Agent Module", "FastAPI Backend API"],
+    index=1 if api_online else 0,
+    help="Direct Mode executes agent logic directly inside Streamlit. FastAPI Mode connects to external FastAPI server."
 )
 
 api_base_url = st.sidebar.text_input(
@@ -85,6 +91,8 @@ api_base_url = st.sidebar.text_input(
     value=settings.fastapi_url,
     help="Target host URL for FastAPI endpoint calls."
 )
+if not api_online and execution_mode == "FastAPI Backend API":
+    st.sidebar.caption("⚠️ *FastAPI server on port 8000 is offline. Start it via `python main.py --mode api` or `python main.py --mode dev`.*")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 🎛️ Session & Context Controls")
@@ -223,7 +231,7 @@ with tab_chat:
                         res = requests.post(
                             f"{api_base_url.rstrip('/')}/api/v1/chat",
                             json=payload,
-                            timeout=30
+                            timeout=5
                         )
                         if res.status_code == 200:
                             structured_res = StructuredResponse(**res.json())
