@@ -226,7 +226,9 @@ with tab_chat:
                             "message": user_input,
                             "session_id": st.session_state.session_id,
                             "temperature": temperature,
-                            "system_prompt_override": system_prompt_override if system_prompt_override.strip() else None
+                            "system_prompt_override": system_prompt_override if system_prompt_override.strip() else None,
+                            "provider_override": provider_key,
+                            "hf_model_override": hf_model_input
                         }
                         res = requests.post(
                             f"{api_base_url.rstrip('/')}/api/v1/chat",

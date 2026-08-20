@@ -25,6 +25,14 @@ class ChatRequest(BaseModel):
         default=None,
         description="Optional custom system prompt instruction."
     )
+    provider_override: Optional[str] = Field(
+        default=None,
+        description="Optional LLM provider override ('huggingface', 'openai', 'fallback')."
+    )
+    hf_model_override: Optional[str] = Field(
+        default=None,
+        description="Optional Hugging Face model repository name."
+    )
 
 
 class ToolExecutionTrace(BaseModel):

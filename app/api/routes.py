@@ -42,7 +42,9 @@ async def chat_endpoint(request: ChatRequest) -> StructuredResponse:
             message=request.message,
             session_id=request.session_id,
             temperature=request.temperature or settings.temperature,
-            system_prompt=request.system_prompt_override
+            system_prompt=request.system_prompt_override,
+            provider_override=request.provider_override,
+            hf_model_override=request.hf_model_override
         )
         return response
 

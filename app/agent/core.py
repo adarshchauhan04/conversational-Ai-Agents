@@ -441,12 +441,9 @@ class ConversationalAgent:
             )
             response_paragraphs.append(f"### 📅 Datetime Information\n```\n{dt_output}\n```")
 
-        # 4. Web Search tool check
-        search_keywords = ['search', 'latest', 'news', 'who is', 'what is', 'find', 'stock', 'weather', 'python', 'fastapi', 'streamlit', 'ai', 'langchain', 'huggingface', 'hugging face']
-        is_search_query = any(k in msg_lower for k in search_keywords)
-
-        if is_search_query:
-            thought_process.append(f"Information query detected. Executing 'web_search' tool for: '{message}'")
+        # 4. If no math or datetime tool was triggered, execute web_search for the question
+        if not is_math_query and not is_datetime_query:
+            thought_process.append(f"Executing web_search tool for query: '{message}'")
             t_start = time.time()
             search_output = web_search.invoke(message)
             t_dur = (time.time() - t_start) * 1000
@@ -460,19 +457,10 @@ class ConversationalAgent:
                     execution_time_ms=round(t_dur, 2)
                 )
             )
-            response_paragraphs.append(f"### 🔍 Search Results & Information\n{search_output}")
+            response_paragraphs.append(f"### 🔍 Search & Knowledge Results\n{search_output}")
 
-        if not response_paragraphs:
-            final_text = (
-                f"I received your query: '{message}'{prev_context_hint}.\n\n"
-                "I am ready to assist you! Try asking me:\n"
-                "- *'What is a 18% tip on $125.00 plus tax?'*\n"
-                "- *'Search for the latest news in AI'* \n"
-                "- *'What date will it be 45 days from today?'*"
-            )
-        else:
-            header_intro = f"Here is the response and tool execution summary{prev_context_hint}:\n\n"
-            final_text = header_intro + "\n\n".join(response_paragraphs)
+        header_intro = f"Here is the detailed response and tool execution summary{prev_context_hint}:\n\n"
+        final_text = header_intro + "\n\n".join(response_paragraphs)
 
         thought_process.append("Completed turn processing. Packaging response with structured metadata.")
         structured_data = self._extract_structured_data(message, final_text, tool_traces)
